@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="es-PE">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#E31F2B">
+<title>Cocina — Mr. Cheffer · demo</title>
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* ==========================================================================
+   Pantalla de cocina (KDS) — demo Mr. Cheffer.
+
+   Es la respuesta al pedido de Jorge: hoy él "canta" el pedido a la cocina;
+   lo que quiere es que, al confirmarse el pago, el ticket salga solo en la
+   etiquetera. Aquí, mientras no compre impresora, una laptop hace de pantalla.
+
+   Lee   GET {webhook}/mrcheffer-demo-cocina   cada 5 s
+         -> { ok:true, pedidos:[{ id, creado, estado:'pending|verified|rejected',
+              cliente, direccion, items, notas, total, pagado_en }] }
+   Columnas: "Esperando pago" (NO PREPARAR) y "A cocina" (pago validado).
+   Cada pedido validado es una comanda de 80 mm (@media print).
+
+   ?mock=1  -> pedidos de ejemplo del catálogo real, sin red (para diseñar/probar).
+   ========================================================================== */
+:root{
+  --rojo:#E31F2B; --rojo-osc:#B3121D;
+  --crema:#FEEBC3; --crema-cl:#FFF6E3;
+  --cafe:#26211B;
+  --amarillo:#F7B320;
+  --verde:#39D98A; --verde-osc:#16794A;
+  --fondo:#14100c; --col:#1c1712; --tarj:#262019; --linea:#3b3227;
+  --muted:#bda983;
+  --display:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
+  --sans:'Nunito Sans','Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--fondo);color:var(--crema);font-family:var(--sans);font-size:18px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+img{max-width:100%;display:block}
+h1,h2,h3,p,ul{margin:0}
+ul{padding:0;list-style:none}
+button{font-family:inherit;font-size:inherit;color:inherit}
+[hidden]{display:none !important}
+a{color:var(--amarillo)}
+:focus-visible{outline:3px solid var(--amarillo);outline-offset:2px;border-radius:6px}
+#print-area{display:none}
+
+/* ---------- barra superior ---------- */
+.bar{background:var(--rojo);box-shadow:0 3px 0 rgba(0,0,0,.35);flex:none;position:relative;z-index:5}
+.bar-in{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:8px 16px}
+.bar .logo{height:46px;width:auto;flex:none}
+.bar h1{font-family:var(--display);font-weight:400;font-size:2rem;letter-spacing:.08em;line-height:1;color:var(--crema)}
+.stats{display:flex;gap:8px}
+.stat{background:rgba(0,0,0,.24);border-radius:12px;padding:3px 12px 2px;text-align:center;min-width:68px}
+.stat b{display:block;font-family:var(--display);font-weight:400;font-size:2rem;line-height:1}
+.stat span{display:block;font-size:.66rem;font-weight:900;letter-spacing:.12em;text-transform:uppercase;opacity:.9}
+.bar-sp{flex:1}
+.sw{display:inline-flex;align-items:center;gap:10px;background:rgba(0,0,0,.22);border:2px solid rgba(254,235,195,.4);border-radius:999px;
+  padding:5px 14px 5px 6px;cursor:pointer;font-weight:800;font-size:.85rem;line-height:1.15;text-align:left}
+.sw:hover{background:rgba(0,0,0,.34)}
+.sw i{flex:none;width:44px;height:26px;border-radius:999px;background:rgba(254,235,195,.28);position:relative;transition:background .15s}
+.sw i::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:var(--crema);transition:transform .15s}
+.sw[aria-checked="true"] i{background:var(--verde)}
+.sw[aria-checked="true"] i::after{transform:translateX(18px);background:#fff}
+.sw small{display:block;font-weight:600;font-size:.68rem;opacity:.85}
+.btn-mini{min-height:40px;border-radius:999px;border:2px solid rgba(254,235,195,.5);background:transparent;color:var(--crema);padding:0 14px;font-weight:800;font-size:.85rem;cursor:pointer}
+.btn-mini:hover{background:rgba(0,0,0,.28)}
+.est{display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:800}
+.est .pt{width:12px;height:12px;border-radius:50%;background:var(--verde);box-shadow:0 0 0 4px rgba(57,217,138,.25);flex:none}
+.est.off .pt{background:#ff6b6b;box-shadow:0 0 0 4px rgba(255,107,107,.3)}
+.est.mock .pt{background:var(--amarillo);box-shadow:0 0 0 4px rgba(247,179,32,.3)}
+.reloj{font-family:var(--display);font-size:1.7rem;letter-spacing:.06em;line-height:1}
+.aviso-sonido{background:var(--amarillo);color:var(--cafe);font-weight:900;text-align:center;padding:8px 14px;font-size:.95rem;cursor:pointer;border:0;width:100%}
+.aviso-red{background:#7a1c1c;color:#ffd9d9;font-weight:800;text-align:center;padding:8px 14px;font-size:.95rem}
+
+/* ---------- tablero ---------- */
+.board{flex:1;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;padding:16px;align-items:start;min-height:0}
+@media (min-width:1000px){ .board{grid-template-columns:minmax(340px,.72fr) minmax(0,1.5fr)} }
+.col{background:var(--col);border:2px solid var(--linea);border-radius:20px;padding:14px 14px 16px;min-width:0}
+.col-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.col-h h2{font-family:var(--display);font-weight:400;font-size:2.3rem;letter-spacing:.05em;line-height:1}
+.col-h .n{font-family:var(--display);font-size:1.8rem;line-height:1;background:var(--crema);color:var(--cafe);border-radius:999px;min-width:44px;height:44px;padding:5px 12px 0;text-align:center}
+.no-prep{margin-left:auto;font-family:var(--display);font-size:1.35rem;letter-spacing:.08em;background:var(--rojo);color:#fff;border-radius:8px;padding:6px 12px 3px;line-height:1;animation:parpadeo 2.2s ease-in-out infinite}
+@keyframes parpadeo{0%,100%{opacity:1}50%{opacity:.62}}
+.col-go{border-color:var(--verde-osc)}
+.col-go .col-h h2{color:var(--verde)}
+.col-wait .col-h h2{color:var(--amarillo)}
+.col-sub{font-size:.85rem;color:var(--muted);font-weight:700;margin:-6px 0 12px}
+.lista{display:grid;gap:12px}
+.tickets{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:16px;align-items:start}
+.vacio{border:2px dashed var(--linea);border-radius:16px;padding:26px 18px;text-align:center;color:var(--muted);font-weight:700}
+.vacio strong{display:block;color:var(--crema);font-size:1.2rem;margin-bottom:4px}
+.vacio.err{border-color:#7a1c1c;color:#ffb8b8}
+
+/* ---------- tarjeta: esperando pago ---------- */
+.wait{background:var(--tarj);border:2px solid var(--linea);border-left:8px solid var(--amarillo);border-radius:14px;padding:12px 14px}
+.wait-top{display:flex;align-items:baseline;gap:10px}
+.wait-num{font-family:var(--display);font-size:2rem;letter-spacing:.05em;line-height:1;color:var(--amarillo)}
+.wait-t{margin-left:auto;font-size:.8rem;font-weight:800;color:var(--muted)}
+.wait-cli{font-weight:800;margin-top:4px}
+.wait-dir{font-size:.85rem;color:var(--muted);font-weight:600}
+.wait ul{margin-top:8px;border-top:1px dashed var(--linea);padding-top:8px}
+.wait li{display:flex;gap:8px;font-weight:700;font-size:1rem;line-height:1.3;padding:1px 0}
+.wait li .q{color:var(--amarillo);flex:none;min-width:2ch}
+.wait li .x{display:block;font-size:.8rem;color:var(--muted);text-transform:uppercase;font-weight:800}
+.wait-nota{margin-top:6px;font-size:.85rem;color:var(--muted);font-weight:700}
+.wait-tot{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px;padding-top:8px;border-top:1px dashed var(--linea)}
+.wait-tot span{font-size:.75rem;font-weight:900;letter-spacing:.12em;color:var(--muted)}
+.wait-tot b{font-family:var(--display);font-weight:400;font-size:1.7rem;letter-spacing:.03em}
+.wait-msg{margin-top:8px;background:rgba(247,179,32,.12);border:1px solid rgba(247,179,32,.45);border-radius:10px;padding:6px 10px;font-size:.82rem;font-weight:800;color:var(--amarillo)}
+.rech{background:var(--col);border:2px solid var(--linea);border-radius:14px;margin-top:12px}
+.rech summary{cursor:pointer;padding:10px 14px;font-weight:800;color:var(--muted);font-size:.9rem}
+.rech .lista{padding:0 12px 12px}
+.wait.rechazado{border-left-color:#ff6b6b;opacity:.85}
+.wait.rechazado .wait-num{color:#ff9a9a;text-decoration:line-through}
+.wait.rechazado .wait-msg{background:rgba(255,107,107,.12);border-color:rgba(255,107,107,.45);color:#ffb0b0}
+
+/* ---------- comanda (pantalla y papel comparten estructura) ---------- */
+.tk{background:#fffdf6;color:#111;border-radius:6px 6px 0 0;padding:14px 16px 12px;position:relative;box-shadow:0 8px 24px rgba(0,0,0,.5);
+  font-family:var(--sans)}
+.tk::after{content:"";position:absolute;left:0;right:0;bottom:-10px;height:10px;
+  background:linear-gradient(-45deg,transparent 7px,#fffdf6 0) 0 0/14px 10px repeat-x,linear-gradient(45deg,transparent 7px,#fffdf6 0) 0 0/14px 10px repeat-x}
+.tk.nuevo{animation:nuevo 1.1s ease-in-out 6}
+@keyframes nuevo{0%,100%{box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 0 0 rgba(57,217,138,0)}50%{box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 0 8px rgba(57,217,138,.9)}}
+.tk-marca{text-align:center;font-family:var(--display);font-size:1.15rem;letter-spacing:.2em;color:#444;line-height:1}
+.tk-top{display:flex;align-items:flex-end;gap:10px;border-bottom:3px solid #111;padding:2px 0 8px;margin-top:6px}
+.tk-num{font-family:var(--display);font-size:2.8rem;letter-spacing:.03em;line-height:.9}
+.tk-hora{margin-left:auto;text-align:right;font-weight:900;font-size:1.05rem;line-height:1.1}
+.tk-hora small{display:block;font-weight:700;font-size:.72rem;color:#555}
+.tk-cli{padding:9px 0 8px;border-bottom:2px dashed #999}
+.tk-cli b{display:block;font-size:1.32rem;font-weight:900;line-height:1.15}
+.tk-cli span{display:block;font-size:1.02rem;font-weight:700;line-height:1.3;color:#222;overflow-wrap:anywhere}
+.tk-items{padding:8px 0 8px;border-bottom:2px dashed #999}
+.tk-items li{display:flex;gap:10px;font-size:1.4rem;font-weight:900;line-height:1.18;padding:4px 0}
+.tk-items .q{flex:none;min-width:2.1ch;text-align:right}
+.tk-items .n{flex:1;min-width:0;overflow-wrap:anywhere}
+.tk-items .x{display:block;font-size:1rem;font-weight:800;color:#333;text-transform:uppercase}
+.tk-notas{margin:9px 0 2px;border:3px solid #111;border-radius:8px;padding:6px 10px 7px;background:#ffe27a}
+.tk-notas small{display:block;font-size:.7rem;font-weight:900;letter-spacing:.16em}
+.tk-notas b{display:block;font-size:1.28rem;font-weight:900;line-height:1.25;text-transform:uppercase;overflow-wrap:anywhere}
+.tk-tot{display:flex;align-items:baseline;justify-content:space-between;border-top:3px solid #111;margin-top:10px;padding-top:6px}
+.tk-tot span{font-size:.86rem;font-weight:900;letter-spacing:.14em}
+.tk-tot b{font-family:var(--display);font-weight:400;font-size:2.4rem;letter-spacing:.02em;line-height:1}
+.tk-pago{margin-top:6px;text-align:center;border:3px solid #111;border-radius:8px;padding:5px 8px 4px;font-weight:900;font-size:1.06rem;letter-spacing:.06em;text-transform:uppercase}
+.tk-pago small{display:block;font-size:.72rem;font-weight:700;letter-spacing:.04em;color:#444;text-transform:none}
+.tk-acc{display:flex;gap:8px;margin-top:12px}
+.tk-acc button{flex:1;min-height:52px;border-radius:12px;border:3px solid #111;background:#111;color:#fffdf6;font-weight:900;font-size:1rem;cursor:pointer;line-height:1.1}
+.tk-acc button:hover{background:#000}
+.tk-acc button.sec{background:transparent;color:#111;flex:0 0 34%}
+.tk-acc button.sec:hover{background:#111;color:#fffdf6}
+.impresa{position:absolute;top:8px;right:10px;font-size:.66rem;font-weight:900;letter-spacing:.08em;color:var(--verde-osc);background:#d8f5e6;border-radius:999px;padding:2px 9px;text-transform:uppercase}
+.tk-desde{text-align:center;font-size:.78rem;font-weight:800;color:#555;margin-top:4px}
+
+.pie{padding:10px 16px 16px;font-size:.78rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
+.pie a{font-weight:800;text-decoration:none}
+.pie .sp{flex:1}
+.pie code{background:var(--tarj);border:1px solid var(--linea);border-radius:6px;padding:1px 6px;font-size:.78rem}
+
+/* ---------- impresión: solo la comanda, a 80 mm ---------- */
+@page{ size:80mm auto; margin:0 }
+@media print{
+  html,body{background:#fff !important;color:#000 !important;min-height:0 !important;display:block !important}
+  body > *:not(#print-area){display:none !important}
+  #print-area{display:block !important;width:72mm;margin:0 auto;padding:2mm 0 6mm}
+  #print-area .tk{box-shadow:none !important;border-radius:0 !important;background:#fff !important;padding:0 1mm !important;animation:none !important;color:#000}
+  #print-area .tk::after{display:none !important}
+  #print-area .tk-notas{background:#fff !important;border-width:2.5px}
+  #print-area .tk-acc,#print-area .impresa{display:none !important}
+  #print-area .tk-marca{font-size:20px;color:#000}
+  #print-area .tk-num{font-size:44px}
+  #print-area .tk-items li{font-size:19px}
+  #print-area .tk-cli b{font-size:19px}
+  #print-area .tk-cli span{font-size:15px;color:#000}
+  #print-area .tk-hora small,#print-area .tk-pago small,#print-area .tk-desde{color:#000}
+  #print-area .tk-items .x{color:#000}
+}
+@media (max-width:640px){
+  body{font-size:17px}
+  .bar h1{font-size:2rem}
+  .tickets{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){ .tk.nuevo,.no-prep{animation:none} }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <img class="logo" src="assets/logo-rojo.png" width="335" height="148" alt="Mr. Cheffer House Kitchen">
+    <h1>Cocina</h1>
+    <div class="stats" aria-live="polite">
+      <div class="stat"><b id="k-go">0</b><span>A cocina</span></div>
+      <div class="stat"><b id="k-wait">0</b><span>Sin pagar</span></div>
+    </div>
+    <div class="bar-sp"></div>
+    <button class="sw" id="sw-sonido" type="button" role="switch" aria-checked="true"><i></i><span>Sonido<small>al entrar un pedido pagado</small></span></button>
+    <button class="sw" id="sw-auto" type="button" role="switch" aria-checked="false"><i></i><span>Imprimir automáticamente<small>al llegar un pedido pagado</small></span></button>
+    <button class="btn-mini" id="btn-prueba" type="button" title="Probar el sonido de aviso">Probar sonido</button>
+    <button class="btn-mini solo-mock" id="btn-sim" type="button" hidden>+ Simular pedido</button>
+    <div class="est" id="est" role="status"><span class="pt"></span><span id="est-txt">Conectando…</span></div>
+    <div class="reloj" id="reloj">--:--</div>
+  </div>
+</header>
+<button class="aviso-sonido" id="aviso-sonido" type="button" hidden>Toca aquí una vez para activar el sonido de aviso</button>
+<div class="aviso-red" id="aviso-red" hidden></div>
+
+<main class="board">
+
+  <section class="col col-wait" aria-labelledby="h-wait">
+    <div class="col-h">
+      <h2 id="h-wait">Esperando pago</h2>
+      <span class="n" id="n-wait">0</span>
+      <span class="no-prep">NO PREPARAR</span>
+    </div>
+    <p class="col-sub">Estos pedidos todavía no tienen el pago validado. Se pasan a cocina solos.</p>
+    <div class="lista" id="lista-wait"></div>
+    <details class="rech" id="rech" hidden>
+      <summary id="rech-sum">Pagos no recibidos</summary>
+      <div class="lista" id="lista-rech"></div>
+    </details>
+  </section>
+
+  <section class="col col-go" aria-labelledby="h-go">
+    <div class="col-h">
+      <h2 id="h-go">A cocina</h2>
+      <span class="n" id="n-go">0</span>
+    </div>
+    <p class="col-sub">Pago validado: se prepara. El más antiguo va primero. <a href="#" id="lnk-restaurar" hidden>Volver a mostrar los listos</a></p>
+    <div class="tickets" id="lista-go"></div>
+  </section>
+
+</main>
+
+<div class="pie">
+  <span>Demostración preparada por <b>IJV Agency</b> para Mr. Cheffer.</span>
+  <span class="largo">Para imprimir sin ventana de confirmación, abre Chrome con <code>--kiosk-printing</code> y elige la impresora de la cocina como predeterminada.</span>
+  <span class="sp"></span>
+  <a href="./whatsapp">Simulador de WhatsApp</a>
+  <a href="./">Sitio</a>
+  <a href="https://ijvagency.com/" target="_blank" rel="noopener">Powered by IJV</a>
+</div>
+
+<div id="print-area" aria-hidden="true"></div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ---------------- configuración ---------------- */
+  var BASE_DEF = 'https://meta.ijvagency.com/webhook';
+  var qs = new URLSearchParams(location.search);
+  var esLocal = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  var BASE = (esLocal && qs.get('api')) ? qs.get('api').replace(/\/$/,'') : BASE_DEF;
+  var ENDPOINT = BASE + '/mrcheffer-demo-cocina';
+  /* Fuera de http(s) (file://, vista previa data:) la pantalla NUNCA consulta el
+     endpoint real: el 29-sep una pestaña de prueba abierta desde file:// martilló la
+     instancia compartida de n8n. En esos orígenes se ve siempre con datos de ejemplo. */
+  var ORIGEN_WEB = /^https?:$/.test(location.protocol);
+  var MOCK = qs.get('mock') === '1' || !ORIGEN_WEB;
+  var INTERVALO = 5000;
+  var TIMEOUT = 8000;
+  var TZ = 'America/Lima';
+  var KS = { sonido:'mrcocina:sonido', auto:'mrcocina:auto', listos:'mrcocina:listos', impresos:'mrcocina:impresos' };
+
+  /* ---------------- utilidades ---------------- */
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function lsJSON(k){ try{ var v = JSON.parse(lsGet(k) || '[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; } }
+
+  function toDate(v){
+    if(v == null || v === '') return null;
+    if(v instanceof Date) return v;
+    if(typeof v === 'number') return new Date(v < 1e12 ? v*1000 : v);
+    var s = String(v).trim();
+    if(/^\d{10,13}$/.test(s)) return toDate(Number(s));
+    var d = new Date(s.replace(' ','T'));
+    return isNaN(d) ? null : d;
+  }
+  function horaCorta(d){
+    if(!d) return '';
+    var s;
+    try{ s = new Intl.DateTimeFormat('es-PE',{timeZone:TZ,hour:'numeric',minute:'2-digit',hour12:true}).format(d); }
+    catch(e){ var h=d.getHours(), m=('0'+d.getMinutes()).slice(-2); s = (h%12||12)+':'+m+' '+(h<12?'a':'p')+'. m.'; }
+    return s.replace(/[  ]/g,' ').replace(/\s*\b([APap])\.?\s*[Mm]\.?/, function(_,l){ return ' ' + l.toLowerCase() + '. m.'; });
+  }
+  function haceCuanto(d){
+    if(!d) return '';
+    var min = Math.round((Date.now() - d.getTime()) / 60000);
+    if(min < 1) return 'ahora mismo';
+    if(min === 1) return 'hace 1 min';
+    if(min < 60) return 'hace ' + min + ' min';
+    var h = Math.floor(min/60), r = min % 60;
+    return 'hace ' + h + ' h' + (r ? ' ' + r + ' min' : '');
+  }
+  function soles(v){
+    if(v == null || v === '') return '';
+    var n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^\d.,-]/g,'').replace(',','.'));
+    return isNaN(n) ? String(v) : 'S/ ' + n.toFixed(2);
+  }
+  function numPedido(id){
+    var s = String(id == null ? '' : id).trim();
+    if(!s) return '#—';
+    if(s.charAt(0) === '#') return s;
+    return '#' + (s.length > 12 ? s.slice(-6).toUpperCase() : s);
+  }
+
+  /* ---------------- normalización de pedidos ----------------
+     El endpoint lo construye otra pieza: `items` puede llegar como texto
+     ("2 Cheffer Burger\n1 Inca Cola"), lista de textos o lista de objetos.
+     Se acepta cualquiera de las tres formas sin romper la pantalla. */
+  function parseLinea(t){
+    t = String(t == null ? '' : t).trim();
+    if(!t) return null;
+    var m = /^(\d+)\s*(?:[x×]\s*|\s)\s*(.+)$/i.exec(t);
+    if(m) return { q:+m[1], n:m[2].trim(), x:'' };
+    m = /^(.+?)\s*[x×]\s*(\d+)$/i.exec(t);
+    if(m) return { q:+m[2], n:m[1].trim(), x:'' };
+    return { q:null, n:t, x:'' };
+  }
+  function normItems(it){
+    var out = [];
+    if(it == null) return out;
+    if(typeof it === 'string'){
+      var partes = it.split(/\r?\n|;|\|/).map(function(s){ return s.trim(); }).filter(Boolean);
+      if(partes.length === 1){
+        var sub = partes[0].split(/,\s+(?=\d+\s*(?:[x×]\s*)?[A-Za-zÁÉÍÓÚÑáéíóúñ])/);
+        if(sub.length > 1) partes = sub;
+      }
+      partes.forEach(function(p){ var l = parseLinea(p); if(l) out.push(l); });
+      return out;
+    }
+    if(Array.isArray(it)){
+      it.forEach(function(e){
+        if(e == null) return;
+        if(typeof e === 'string' || typeof e === 'number'){ var l = parseLinea(e); if(l) out.push(l); return; }
+        if(typeof e === 'object'){
+          var q = e.cantidad != null ? e.cantidad : (e.qty != null ? e.qty : (e.q != null ? e.q : (e.cant != null ? e.cant : 1)));
+          var n = e.nombre || e.name || e.producto || e.item || e.descripcion || e.titulo || '';
+          var x = e.notas || e.nota || e.especificaciones || e.detalle || e.salsas || e.extra || '';
+          if(Array.isArray(x)) x = x.join(', ');
+          if(n) out.push({ q:Number(q) || 1, n:String(n), x:String(x || '') });
+        }
+      });
+      return out;
+    }
+    if(typeof it === 'object'){ return normItems([it]); }
+    return out;
+  }
+  function normNotas(n){
+    if(n == null) return '';
+    if(Array.isArray(n)) n = n.join(' · ');
+    return String(n).replace(/\s*\r?\n\s*/g,' · ').trim();
+  }
+  function normEstado(e){
+    e = String(e || '').toLowerCase();
+    if(/verif|pagad|paid|ok|aprob/.test(e)) return 'verified';
+    if(/rech|reject|no_pag|nopag/.test(e)) return 'rejected';
+    return 'pending';
+  }
+  function normPedido(p){
+    return {
+      id: String(p.id == null ? '' : p.id),
+      creado: toDate(p.creado),
+      estado: normEstado(p.estado),
+      cliente: String(p.cliente || '').trim(),
+      direccion: String(p.direccion || '').trim(),
+      items: normItems(p.items),
+      notas: normNotas(p.notas),
+      total: p.total,
+      pagado: toDate(p.pagado_en),
+      metodo: String(p.metodo || p.medio_pago || 'Yape').trim() || 'Yape'
+    };
+  }
+
+  /* ---------------- estado ---------------- */
+  var st = {
+    datos: [],            /* pedidos normalizados */
+    prev: null,           /* id -> estado de la carga anterior (null = primera carga) */
+    listos: lsJSON(KS.listos),
+    impresos: lsJSON(KS.impresos),
+    nuevoDesde: {},       /* id -> ms en que se vio llegar (para el destello) */
+    sonido: lsGet(KS.sonido) !== '0',
+    auto: lsGet(KS.auto) === '1',
+    conectado: null, cargado: false, ultimoError: null
+  };
+
+  /* ---------------- sonido (WebAudio, sin archivos) ---------------- */
+  var ctx = null;
+  function audioCtx(){
+    if(ctx) return ctx;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return null;
+    try{ ctx = new AC(); }catch(e){ ctx = null; }
+    return ctx;
+  }
+  function desbloquea(){
+    var c = audioCtx();
+    if(c && c.state === 'suspended' && c.resume) c.resume().then(pintaAvisoSonido, function(){});
+    pintaAvisoSonido();
+  }
+  function tono(c, f, t0, dur, vol){
+    var o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  function ding(){
+    var c = audioCtx(); if(!c) return;
+    if(c.state === 'suspended' && c.resume) c.resume();
+    var t = c.currentTime + 0.02;
+    tono(c, 880, t, 0.55, 0.32);          /* ding */
+    tono(c, 1174.7, t + 0.22, 0.75, 0.32); /* dong */
+    tono(c, 880, t + 0.85, 0.55, 0.32);
+    tono(c, 1174.7, t + 1.07, 0.75, 0.32);
+  }
+  function pintaAvisoSonido(){
+    var bloqueado = st.sonido && (!ctx || ctx.state !== 'running');
+    $('aviso-sonido').hidden = !bloqueado;
+  }
+
+  /* ---------------- interruptores ---------------- */
+  function pintaSwitches(){
+    $('sw-sonido').setAttribute('aria-checked', st.sonido);
+    $('sw-auto').setAttribute('aria-checked', st.auto);
+    pintaAvisoSonido();
+  }
+
+  /* ---------------- comanda ---------------- */
+  function itemsHTML(p){
+    return p.items.map(function(l){
+      return '<li><span class="q">' + (l.q != null ? esc(l.q) + '×' : '•') + '</span>'
+        + '<span class="n">' + esc(l.n) + (l.x ? '<span class="x">' + esc(l.x) + '</span>' : '') + '</span></li>';
+    }).join('');
+  }
+  /* modo 'papel': sin botones ni marcas de pantalla */
+  function ticketHTML(p, papel){
+    var hora = p.pagado || p.creado;
+    var h = '<article class="tk' + (!papel && recienLlegado(p.id) ? ' nuevo' : '') + '" data-id="' + esc(p.id) + '">';
+    if(!papel && yaImpresa(p.id)) h += '<span class="impresa">Impresa</span>';
+    h += '<div class="tk-marca">MR. CHEFFER · COMANDA</div>';
+    h += '<div class="tk-top"><span class="tk-num">' + esc(numPedido(p.id)) + '</span>'
+       + '<span class="tk-hora">' + esc(horaCorta(hora)) + (papel ? '' : '<small>' + esc(haceCuanto(hora)) + '</small>') + '</span></div>';
+    h += '<div class="tk-cli"><b>' + esc(p.cliente || 'Cliente sin nombre') + '</b>'
+       + '<span>' + esc(p.direccion || 'Sin dirección') + '</span></div>';
+    h += '<ul class="tk-items">' + (itemsHTML(p) || '<li><span class="n">Sin detalle de items</span></li>') + '</ul>';
+    if(p.notas) h += '<div class="tk-notas"><small>NOTAS</small><b>' + esc(p.notas) + '</b></div>';
+    h += '<div class="tk-tot"><span>TOTAL</span><b>' + esc(soles(p.total) || '—') + '</b></div>';
+    h += '<div class="tk-pago">Pagado · ' + esc(p.metodo) + (p.pagado ? '<small>' + esc(horaCorta(p.pagado)) + '</small>' : '') + '</div>';
+    if(!papel){
+      h += '<div class="tk-acc"><button type="button" data-acc="imprimir" data-id="' + esc(p.id) + '">Imprimir comanda</button>'
+         + '<button type="button" class="sec" data-acc="listo" data-id="' + esc(p.id) + '">Listo</button></div>';
+    }
+    h += '</article>';
+    return h;
+  }
+  function waitHTML(p, rechazado){
+    var h = '<article class="wait' + (rechazado ? ' rechazado' : '') + '" data-id="' + esc(p.id) + '">';
+    h += '<div class="wait-top"><span class="wait-num">' + esc(numPedido(p.id)) + '</span>'
+       + '<span class="wait-t">' + esc(horaCorta(p.creado)) + (p.creado ? ' · ' + esc(haceCuanto(p.creado)) : '') + '</span></div>';
+    h += '<div class="wait-cli">' + esc(p.cliente || 'Cliente sin nombre') + '</div>';
+    if(p.direccion) h += '<div class="wait-dir">' + esc(p.direccion) + '</div>';
+    h += '<ul>' + (itemsHTML(p) || '<li><span class="n">Sin detalle de items</span></li>') + '</ul>';
+    if(p.notas) h += '<div class="wait-nota">Notas: ' + esc(p.notas) + '</div>';
+    h += '<div class="wait-tot"><span>TOTAL</span><b>' + esc(soles(p.total) || '—') + '</b></div>';
+    h += '<div class="wait-msg">' + (rechazado ? 'PAGO NO RECIBIDO · NO SE PREPARA' : 'NO PREPARAR · esperando que se valide el pago') + '</div>';
+    h += '</article>';
+    return h;
+  }
+
+  function recienLlegado(id){ var t = st.nuevoDesde[id]; return !!t && (Date.now() - t) < 7000; }
+  function yaImpresa(id){ return st.impresos.indexOf(id) >= 0; }
+
+  /* Diff por clave: solo se reemplaza la tarjeta cuyo HTML cambió, para que el
+     destello de "pedido nuevo" no se reinicie en cada consulta. */
+  function sincroniza(cont, items, fn){
+    var existentes = {};
+    Array.prototype.forEach.call(cont.children, function(el){ if(el.hasAttribute('data-key')) existentes[el.getAttribute('data-key')] = el; });
+    var vistos = {}, prevEl = null;
+    items.forEach(function(p){
+      var html = fn(p), key = p.id, el = existentes[key];
+      vistos[key] = true;
+      if(!el || el.getAttribute('data-h') !== html){
+        var tmp = document.createElement('div'); tmp.innerHTML = html;
+        var nuevo = tmp.firstElementChild;
+        nuevo.setAttribute('data-key', key); nuevo.setAttribute('data-h', html);
+        if(el) cont.replaceChild(nuevo, el); else cont.appendChild(nuevo);
+        el = nuevo;
+      }
+      /* orden estable */
+      var deberiaEstarDespuesDe = prevEl;
+      if((deberiaEstarDespuesDe ? deberiaEstarDespuesDe.nextSibling : cont.firstChild) !== el){
+        cont.insertBefore(el, deberiaEstarDespuesDe ? deberiaEstarDespuesDe.nextSibling : cont.firstChild);
+      }
+      prevEl = el;
+    });
+    Object.keys(existentes).forEach(function(k){ if(!vistos[k] && existentes[k].parentNode === cont) cont.removeChild(existentes[k]); });
+  }
+  function conPlaceholder(cont, vacioHTML, n){
+    var ph = cont.querySelector(':scope > .vacio');
+    if(n === 0){
+      var d = document.createElement('div'); d.innerHTML = vacioHTML;
+      var nuevo = d.firstElementChild;
+      if(!ph) cont.insertBefore(nuevo, cont.firstChild);
+      else if(ph.getAttribute('data-h') !== nuevo.getAttribute('data-h')) cont.replaceChild(nuevo, ph);
+    }else if(ph){ cont.removeChild(ph); }
+  }
+
+  function asc(a,b){ var x = (a.pagado||a.creado||0), y = (b.pagado||b.creado||0); return (x - y) || 0; }
+
+  function pinta(){
+    var listos = st.listos;
+    var go = st.datos.filter(function(p){ return p.estado === 'verified' && listos.indexOf(p.id) < 0; }).sort(asc);
+    var wait = st.datos.filter(function(p){ return p.estado === 'pending'; }).sort(asc);
+    var rech = st.datos.filter(function(p){ return p.estado === 'rejected'; }).sort(function(a,b){ return -asc(a,b); });
+    var nListos = st.datos.filter(function(p){ return p.estado === 'verified' && listos.indexOf(p.id) >= 0; }).length;
+
+    $('k-go').textContent = go.length; $('n-go').textContent = go.length;
+    $('k-wait').textContent = wait.length; $('n-wait').textContent = wait.length;
+    document.title = (go.length ? '(' + go.length + ') ' : '') + 'Cocina — Mr. Cheffer · demo';
+    $('lnk-restaurar').hidden = nListos === 0;
+    if(nListos) $('lnk-restaurar').textContent = 'Volver a mostrar los listos (' + nListos + ')';
+
+    var vacioGo, vacioWait;
+    if(!st.cargado){
+      var msg = st.ultimoError
+        ? '<div class="vacio err" data-h="err"><strong>Todavía no hay conexión con la cocina.</strong>La pantalla sigue intentando cada 5 segundos. Si es una prueba, abre esta página con <b>?mock=1</b> para ver pedidos de ejemplo.</div>'
+        : '<div class="vacio" data-h="cargando"><strong>Conectando con la cocina…</strong>Un momento.</div>';
+      vacioGo = msg; vacioWait = '<div class="vacio" data-h="w0">Nada esperando pago.</div>';
+    }else if(st.datos.length === 0){
+      vacioGo = '<div class="vacio" data-h="g0"><strong>Todavía no hay pedidos.</strong>Cuando alguien pida en el <a href="./whatsapp">simulador de WhatsApp</a> y se valide su pago, la comanda sale aquí.</div>';
+      vacioWait = '<div class="vacio" data-h="w0">Nada esperando pago.</div>';
+    }else{
+      vacioGo = '<div class="vacio" data-h="g1"><strong>Sin pedidos por preparar.</strong>Cuando se valide un pago, la comanda aparece aquí y suena el aviso.</div>';
+      vacioWait = '<div class="vacio" data-h="w0">Nada esperando pago.</div>';
+    }
+
+    sincroniza($('lista-go'), go, function(p){ return ticketHTML(p, false); });
+    conPlaceholder($('lista-go'), vacioGo, go.length);
+    sincroniza($('lista-wait'), wait, function(p){ return waitHTML(p, false); });
+    conPlaceholder($('lista-wait'), vacioWait, wait.length);
+    sincroniza($('lista-rech'), rech, function(p){ return waitHTML(p, true); });
+    $('rech').hidden = rech.length === 0;
+    $('rech-sum').textContent = 'Pagos no recibidos (' + rech.length + ')';
+  }
+
+  /* ---------------- impresión ---------------- */
+  var cola = [], imprimiendo = false;
+  function encolaImpresion(p){ cola.push(p.id); if(!imprimiendo) procesaCola(); }
+  function procesaCola(){
+    if(!cola.length){ imprimiendo = false; return; }
+    imprimiendo = true;
+    var id = cola.shift();
+    var p = st.datos.filter(function(x){ return x.id === id; })[0];
+    if(!p){ procesaCola(); return; }
+    $('print-area').innerHTML = ticketHTML(p, true);
+    marcaImpresa(id);
+    /* dejar que el navegador pinte el área antes de abrir el diálogo */
+    setTimeout(function(){
+      try{ window.print(); }catch(e){}
+      $('print-area').innerHTML = '';
+      setTimeout(procesaCola, 500);
+    }, 120);
+  }
+  function marcaImpresa(id){
+    if(st.impresos.indexOf(id) < 0){
+      st.impresos.push(id);
+      if(st.impresos.length > 300) st.impresos = st.impresos.slice(-300);
+      lsSet(KS.impresos, JSON.stringify(st.impresos));
+      pinta();
+    }
+  }
+
+  /* ---------------- detección de pedidos nuevos ---------------- */
+  function aplica(lista){
+    var datos = lista.map(normPedido).filter(function(p){ return p.id; });
+    var alertar = [];
+    if(st.prev === null){
+      /* primera carga: lo que ya estaba no dispara sonido ni impresión */
+    }else{
+      datos.forEach(function(p){
+        var antes = st.prev[p.id];
+        if(antes === undefined) st.nuevoDesde[p.id] = Date.now();
+        if(p.estado === 'verified' && antes !== 'verified' && st.listos.indexOf(p.id) < 0){
+          st.nuevoDesde[p.id] = Date.now();
+          if(!yaImpresa(p.id)) alertar.push(p);
+        }
+      });
+    }
+    var mapa = {}; datos.forEach(function(p){ mapa[p.id] = p.estado; });
+    st.prev = mapa; st.datos = datos; st.cargado = true; st.ultimoError = null;
+    pinta();
+    if(alertar.length){
+      if(st.sonido) ding();
+      if(st.auto) alertar.sort(asc).forEach(encolaImpresion);
+    }
+  }
+
+  /* ---------------- red ---------------- */
+  function traer(){
+    if(MOCK) return Promise.resolve(mockLista());
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var to = setTimeout(function(){ if(ctl) ctl.abort(); }, TIMEOUT);
+    return fetch(ENDPOINT, { cache:'no-store', signal: ctl ? ctl.signal : undefined }).then(function(r){
+      clearTimeout(to);
+      if(!r.ok){ var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+      return r.json();
+    }, function(e){ clearTimeout(to); throw e; }).then(function(j){
+      if(!j || j.ok === false || !Array.isArray(j.pedidos)) throw new Error('respuesta inesperada');
+      return j.pedidos;
+    });
+  }
+  function pintaEstado(){
+    var el = $('est'), tx = $('est-txt');
+    el.className = 'est' + (MOCK ? ' mock' : (st.conectado ? '' : ' off'));
+    if(MOCK) tx.textContent = 'Datos de ejemplo';
+    else if(st.conectado) tx.textContent = 'En vivo · ' + horaSeg(new Date());
+    else tx.textContent = 'Sin conexión · reintentando';
+    var av = $('aviso-red');
+    if(!MOCK && !st.conectado && st.cargado){
+      av.hidden = false;
+      av.textContent = 'Se perdió la conexión con la cocina. Los pedidos que ves son los últimos recibidos; se actualiza solo al volver.';
+    }else av.hidden = true;
+  }
+  function horaSeg(d){
+    var p = function(n){ return (n<10?'0':'')+n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  /* La instancia de n8n es compartida con todos los clientes: un endpoint caído
+     no se martilla cada 5 s. Tras un fallo el intervalo se duplica (tope 60 s) y
+     después de MAX_FALLOS seguidos la pantalla deja de consultar hasta que alguien
+     toque "Reintentar". Con la pestaña oculta tampoco se consulta (29-sep: una
+     pestaña olvidada disparó la alarma de 5xx de la instancia). */
+  var MAX_FALLOS = 6;
+  st.fallos = 0;
+  function proximaEspera(){
+    if(st.fallos === 0) return INTERVALO;
+    return Math.min(INTERVALO * Math.pow(2, st.fallos - 1), 60000);
+  }
+  function ciclo(){
+    if(!MOCK && document.hidden){ setTimeout(ciclo, INTERVALO); return; }
+    traer().then(function(lista){
+      st.fallos = 0; st.conectado = true; aplica(lista); pintaEstado();
+    }).catch(function(e){
+      st.fallos++; st.conectado = false; st.ultimoError = e; pintaEstado();
+      if(!st.cargado) pinta();
+    }).then(function(){
+      if(!MOCK && st.fallos >= MAX_FALLOS){ detenido(); return; }
+      setTimeout(ciclo, proximaEspera());
+    });
+  }
+  function detenido(){
+    var av = $('aviso-red');
+    av.hidden = false;
+    av.innerHTML = 'La cocina no responde, así que la pantalla dejó de consultar. <button type="button" id="btn-reintentar" class="btn-mini">Reintentar</button>';
+    var b = $('btn-reintentar');
+    if(b) b.onclick = function(){ st.fallos = 0; av.hidden = true; ciclo(); };
+  }
+
+  /* ---------------- datos de ejemplo (?mock=1) ----------------
+     Pedidos armados con la carta real. Mezclan las tres formas de `items` que la
+     pantalla acepta, para probar el normalizador. */
+  var mockEstado = null;
+  function mockLista(){
+    if(!mockEstado){
+      var t = Date.now();
+      mockEstado = [
+        { id:'MC-1042', creado:new Date(t-14*60000).toISOString(), estado:'verified', cliente:'Rosa Medina', direccion:'Av. Las Flores 123, Dpto 401',
+          items:[{cantidad:1,nombre:'Cheffer Burger',precio:18},{cantidad:1,nombre:'Bacon Cheffer',precio:20},{cantidad:2,nombre:'Inca Cola',precio:4}],
+          notas:'SIN LECHUGA en la Cheffer Burger. Ají de la casa aparte', total:46, pagado_en:new Date(t-11*60000).toISOString() },
+        { id:'MC-1043', creado:new Date(t-9*60000).toISOString(), estado:'verified', cliente:'Carlos Quispe', direccion:'Jr. Los Cedros 456, Casa 2',
+          items:'1 Alitas 12 unidades\n1 Salchipapa Clásica\n1 Coca Cola',
+          notas:'Salsas: BBQ Picante y Honey Mustard', total:56, pagado_en:new Date(t-6*60000).toISOString() },
+        { id:'MC-1044', creado:new Date(t-3*60000).toISOString(), estado:'pending', cliente:'Lucía Paredes', direccion:'Calle Los Pinos 78, Dpto 202',
+          items:['1x Crispy Bowl','1x Torta de Chocolate (porción)'],
+          notas:'Salsas del bowl: Acevichada y Golf', total:47, pagado_en:null }
+      ];
+    }
+    return mockEstado.slice().reverse();      /* el endpoint real entrega el más reciente primero */
+  }
+  var mockSeq = 1045;
+  function simulaPedido(){
+    var muestras = [
+      { cliente:'Mario Salas', direccion:'Av. Los Olivos 910, Dpto 305', items:[{cantidad:1,nombre:'Cheffer Parrillera',precio:20},{cantidad:1,nombre:'Inca Cola',precio:4}], notas:'Sin chimichurri', total:24 },
+      { cliente:'Ana Villanueva', direccion:'Jr. Las Begonias 55', items:'2 Cordon Cheffer\n1 Coca Cola', notas:'Cortar por la mitad', total:44 },
+      { cliente:'Diego Ramos', direccion:'Psje. Los Laureles 12, Casa 4', items:['1 Piqueo Cheffer','2 Inca Cola'], notas:'Salsa: Acevichada', total:60 }
+    ];
+    var m = muestras[Math.floor(Math.random()*muestras.length)];
+    mockLista();
+    var id = 'MC-' + (mockSeq++);
+    mockEstado.push({ id:id, creado:new Date().toISOString(), estado:'pending', cliente:m.cliente, direccion:m.direccion, items:m.items, notas:m.notas, total:m.total, pagado_en:null });
+    /* a los 6 s el "validador" confirma el pago, como haría el correo de Jorge */
+    setTimeout(function(){
+      mockEstado.forEach(function(p){ if(p.id === id){ p.estado = 'verified'; p.pagado_en = new Date().toISOString(); } });
+    }, 6000);
+  }
+
+  /* ---------------- arranque ---------------- */
+  function init(){
+    pintaSwitches();
+    pinta();
+
+    $('sw-sonido').addEventListener('click', function(){
+      st.sonido = !st.sonido; lsSet(KS.sonido, st.sonido ? '1' : '0');
+      if(st.sonido) desbloquea();
+      pintaSwitches();
+    });
+    $('sw-auto').addEventListener('click', function(){
+      st.auto = !st.auto; lsSet(KS.auto, st.auto ? '1' : '0'); pintaSwitches();
+    });
+    $('btn-prueba').addEventListener('click', function(){ desbloquea(); ding(); });
+    $('aviso-sonido').addEventListener('click', function(){ desbloquea(); ding(); });
+    ['pointerdown','keydown'].forEach(function(ev){ document.addEventListener(ev, function once(){
+      desbloquea();
+      if(ctx && ctx.state === 'running') document.removeEventListener(ev, once);
+    }, true); });
+
+    $('lista-go').addEventListener('click', function(ev){
+      var b = ev.target.closest && ev.target.closest('button[data-acc]'); if(!b) return;
+      var id = b.getAttribute('data-id');
+      if(b.getAttribute('data-acc') === 'imprimir'){
+        var p = st.datos.filter(function(x){ return x.id === id; })[0]; if(p) encolaImpresion(p);
+      }else if(b.getAttribute('data-acc') === 'listo'){
+        if(st.listos.indexOf(id) < 0){ st.listos.push(id); if(st.listos.length > 300) st.listos = st.listos.slice(-300); lsSet(KS.listos, JSON.stringify(st.listos)); }
+        pinta();
+      }
+    });
+    $('lnk-restaurar').addEventListener('click', function(ev){
+      ev.preventDefault(); st.listos = []; lsSet(KS.listos, '[]'); pinta();
+    });
+
+    if(MOCK){
+      var bs = $('btn-sim'); bs.hidden = false;
+      bs.addEventListener('click', function(){ desbloquea(); simulaPedido(); });
+    }
+
+    var reloj = function(){
+      var d = new Date(), p = function(n){ return (n<10?'0':'')+n; };
+      $('reloj').textContent = p(d.getHours()) + ':' + p(d.getMinutes());
+    };
+    reloj(); setInterval(reloj, 15000);
+    /* refresca los "hace X min" sin volver a consultar */
+    setInterval(function(){ if(st.cargado) pinta(); }, 30000);
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden && st.cargado) pinta(); });
+
+    ciclo();
+  }
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>
